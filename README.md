@@ -1,4 +1,4 @@
-# anvil-lite-cost-analysis
+# anvil_lite_cost_analysis
 
 This is a simple utility module for the "AnVIL Lite" Cost Analysis notebook.
 
