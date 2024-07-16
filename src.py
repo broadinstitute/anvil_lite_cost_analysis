@@ -1,7 +1,7 @@
 import subprocess
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
 
 
@@ -28,14 +28,22 @@ def run_bash_get_json(args):
     return json.loads(process.stdout)
 
 
-def from_last_month(export):
-    return datetime.fromisoformat(export['properties']['lastModified']).month == datetime.now().month-1
+def from_last_month(last_modified_datetime, now=None):
+    if not now:
+        now = datetime.now()
+    
+    last_month_last_day = now.replace(day=1) - timedelta(days=1)
+    
+    return last_modified_datetime.month == last_month_last_day.month and \
+        last_modified_datetime.year == last_month_last_day.year
 
 
 def latest_export_from_last_month(export_list): 
+    last_modified_dt = lambda ex: datetime.fromisoformat(ex['properties']['lastModified'])
+    
     sorted_export_list = sorted(
-        [ex for ex in export_list if from_last_month(ex)],
-        key=lambda ex: datetime.fromisoformat(ex['properties']['lastModified']),
+        [ex for ex in export_list if from_last_month(last_modified_dt(ex))],
+        key=last_modified_dt,
         reverse=True
     )
     if sorted_export_list:
