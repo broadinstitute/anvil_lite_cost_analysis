@@ -21,15 +21,11 @@ def az_storage_blob_list(
 
 
 def run_bash_get_json(args):
-    process = subprocess.run(args, capture_output=True, text=True)
-
-    if process.returncode == 0:
-        json_data = json.loads(process.stdout)
-    else:
-        # handle this better...
-        print('something went wrong')
-        json_data = None
-    return json_data
+    try:
+        process = subprocess.run(args, capture_output=True, text=True, check=True)
+    except subprocess.CalledProcessError as e:
+        raise Exception(f"Bash script execution failed: {args[0]}. Error code: {e.returncode}")
+    return json.loads(process.stdout)
 
 
 def from_last_month(export):
