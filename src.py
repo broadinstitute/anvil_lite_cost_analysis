@@ -32,6 +32,9 @@ def from_last_month(last_modified_datetime, now=None):
     if not now:
         now = datetime.now()
     
+    # get a datetime object representing the last day of last month
+    # by taking the "now" datetime, setting its "day" param to the first of the month,
+    # and subtracting one day from it.
     last_month_last_day = now.replace(day=1) - timedelta(days=1)
     
     return last_modified_datetime.month == last_month_last_day.month and \
