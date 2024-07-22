@@ -3,8 +3,21 @@ import json
 import os
 import requests
 from uuid import UUID
+from collections import namedtuple
+import pandas as pd
+
+
 
 from .src import Config, latest_export_from_last_month, format_previous_export_filename, filtered_export_df_rolling_window
+
+
+Exports = namedtuple('Exports', [
+    'latest_cost_export',
+    'previous_cost_export',
+    'latest_aks_cost_export',
+    'previous_aks_cost_export'
+])
+
 
 def az_storage_blob_list(
     prefix, 
@@ -86,7 +99,7 @@ def copy_to_workspace_storage(sourcefile, destinationfile, sas_token, cost_manag
     return json.loads(output)
 
 
-def copy_exports_to_workspace(sas_token, cost_management_key, config: Config):
+def get_exports(cost_management_key, config):
     # Find the most recent cost export from the custom storage container.
     sorted_cost_exports = az_storage_blob_list(
         config.cost_management_directory, 
@@ -106,31 +119,39 @@ def copy_exports_to_workspace(sas_token, cost_management_key, config: Config):
     latest_aks_cost_export = sorted_aks_cost_exports[0]
     previous_aks_cost_export = latest_export_from_last_month(sorted_aks_cost_exports)
 
+    return Exports(
+        latest_cost_export=latest_cost_export,
+        previous_cost_export=previous_cost_export,
+        latest_aks_cost_export=latest_aks_cost_export,
+        previous_aks_cost_export=previous_aks_cost_export,
+    )
 
+
+def copy_exports_to_workspace(exports: Exports, sas_token, cost_management_key, config: Config):
     latest_cost_export_responses = [
         copy_to_workspace_storage(
-            latest_cost_export["name"], config.local_costs_url, sas_token, cost_management_key, config),
+            exports.latest_cost_export["name"], config.local_costs_url, sas_token, cost_management_key, config),
         copy_to_workspace_storage(
-            latest_aks_cost_export["name"], config.local_aks_costs_url, sas_token, cost_management_key, config)
+            exports.latest_aks_cost_export["name"], config.local_aks_costs_url, sas_token, cost_management_key, config)
     ]
 
     local_previous_costs_url = format_previous_export_filename(
-        previous_cost_export, "costexport/{}.csv")
+        exports.previous_cost_export, "costexport/{}.csv")
 
     local_previous_aks_costs_url = format_previous_export_filename(
-        previous_aks_cost_export, "costexport/{}-aks.csv")
+        exports.previous_aks_cost_export, "costexport/{}-aks.csv")
 
     previous_cost_export_responses = [
         copy_to_workspace_storage(
-            previous_cost_export["name"], local_previous_costs_url, sas_token, cost_management_key, config),
+            exports.previous_cost_export["name"], local_previous_costs_url, sas_token, cost_management_key, config),
         copy_to_workspace_storage(
-            previous_aks_cost_export["name"], local_previous_aks_costs_url, sas_token, cost_management_key, config)
+            exports.previous_aks_cost_export["name"], local_previous_aks_costs_url, sas_token, cost_management_key, config)
     ]
 
     return [latest_cost_export_responses, previous_cost_export_responses]
 
 
-def get_latest_blobmanifest(config):
+def get_latest_blobmanifest(sas_token, config):
     # Find the most recent blob inventory files.
     # Blob inventory output is spread across multiple files. We need to jump through some hoops to find them.
     # Any given inventory report will have a checksum, a manifest, and some number of CSV files.
@@ -209,8 +230,23 @@ def extract_workspace_tag(tags):
 # Getting the workspace name assumes that the person executing this script has PROJECT_OWNER permissions on
 # the billing project, or otherwise can read the workspace. Else, Rawls will return an error when asking for the name.
 # 
-def get_workspace_name(workspace_id):
-    ws_url = rawls_url + "/api/workspaces/id/" + workspace_id + "?fields=workspace.namespace,workspace.name"
+# def get_workspace_name(workspace_id, azure_token, config):
+#     ws_url = config.rawls_url + "/api/workspaces/id/" + config.workspace_id + "?fields=workspace.namespace,workspace.name"
+
+#     headers = {"Authorization": "Bearer " + azure_token, "accept": "application/json"}
+#     response = requests.get(ws_url, headers=headers)
+#     status_code = response.status_code
+    
+#     if status_code != 200:
+#         print(response.text)
+#         return "id: " + config.workspace_id
+    
+#     ws = json.loads(response.text)
+#     return ws["workspace"]["name"]
+
+
+def list_workspaces(azure_token, config):
+    ws_url = config.rawls_url + "/api/workspaces?fields=workspace.name,workspace.workspaceId"
 
     headers = {"Authorization": "Bearer " + azure_token, "accept": "application/json"}
     response = requests.get(ws_url, headers=headers)
@@ -218,22 +254,7 @@ def get_workspace_name(workspace_id):
     
     if status_code != 200:
         print(response.text)
-        return "id: " + workspace_id
-    
-    ws = json.loads(response.text)
-    return ws["workspace"]["name"]
-
-
-def list_workspaces():
-    ws_url = rawls_url + "/api/workspaces?fields=workspace.name,workspace.workspaceId"
-
-    headers = {"Authorization": "Bearer " + azure_token, "accept": "application/json"}
-    response = requests.get(ws_url, headers=headers)
-    status_code = response.status_code
-    
-    if status_code != 200:
-        print(response.text)
-        return "id: " + workspace_id
+        return "id: " + config.workspace_id
     
     wslist = json.loads(response.text)
     
@@ -243,14 +264,19 @@ def list_workspaces():
 
     return workspaces
 
+def first_non_empty(col1, col2):
+    if col1 is None:
+        return col2
+    else:
+        return col1
 
-def load_blobstorage_dataframe(config):
-    blobmanifest = get_latest_blobmanifest(config)
+def build_analysis_dataframes(exports, azure_token, sas_token, config):
+    blobmanifest = get_latest_blobmanifest(sas_token, config)
 
     print("********** found blob inventory manifest file: " + blobmanifest + " **********")
 
     # Get a SAS-token-enabled URL to the manifest file
-    blobmanifest_url = get_sas_enabled_url(blobmanifest)
+    blobmanifest_url = get_sas_enabled_url(blobmanifest, azure_token, config)
 
     print("********** Appended SAS token to the storage manifest. **********")
 
@@ -269,20 +295,29 @@ def load_blobstorage_dataframe(config):
     print(blobcsvs)
     print("********** Found storage CSVs **********")
 
-    blobcsv_urls = list(map(get_sas_enabled_url, blobcsvs))
+    # blobcsv_urls = list(map(get_sas_enabled_url, blobcsvs))
+    blobcsv_urls = [
+        get_sas_enabled_url(b, azure_token, config) for b in blobcsvs]
 
     # Get SAS-token-enabled URLs to each of the exports we want to analyze
 
-    costexport_url = get_sas_enabled_url(local_costs_url)
-    aks_costexport_url = get_sas_enabled_url(local_aks_costs_url)
+    costexport_url = get_sas_enabled_url(config.local_costs_url, azure_token, config)
+    aks_costexport_url = get_sas_enabled_url(config.local_aks_costs_url, azure_token, config)
 
-    if latest_cost_export['name'] != previous_cost_export['name']:
-        previous_costexport_url = get_sas_enabled_url(local_previous_costs_url)
+    local_previous_costs_url = format_previous_export_filename(
+        exports.previous_cost_export, "costexport/{}.csv")
+
+    local_previous_aks_costs_url = format_previous_export_filename(
+        exports.previous_aks_cost_export, "costexport/{}-aks.csv")
+    
+    
+    if exports.latest_cost_export['name'] != exports.previous_cost_export['name']:
+        previous_costexport_url = get_sas_enabled_url(local_previous_costs_url, azure_token, config)
     else:
         previous_costexport_url = None
 
-    if latest_aks_cost_export['name'] != previous_aks_cost_export['name']:
-        previous_aks_costexport_url = get_sas_enabled_url(local_previous_aks_costs_url)
+    if exports.latest_aks_cost_export['name'] != exports.previous_aks_cost_export['name']:
+        previous_aks_costexport_url = get_sas_enabled_url(local_previous_aks_costs_url, azure_token, config)
     else:
         previous_aks_costexport_url = None
 
@@ -300,13 +335,21 @@ def load_blobstorage_dataframe(config):
 
     if previous_costexport_url:
         previous_costs = load_export_to_dataframe(previous_costexport_url)
-        nonakscosts = filtered_export_df_rolling_window(latest_costs, previous_costs, latest_cost_export, window_size=config.analysis_window_size)
+        nonakscosts = filtered_export_df_rolling_window(
+            latest_costs, 
+            previous_costs, 
+            exports.latest_cost_export, 
+            window_size=config.analysis_window_size)
     else:
         nonakscosts = latest_costs
         
     if previous_aks_costexport_url:
         previous_akscosts = load_export_to_dataframe(previous_aks_costexport_url)
-        akscosts = filtered_export_df_rolling_window(latest_akscosts, previous_akscosts, latest_aks_cost_export, window_size=config.analysis_window_size)
+        akscosts = filtered_export_df_rolling_window(
+            latest_akscosts, 
+            previous_akscosts, 
+            exports.latest_aks_cost_export, 
+            window_size=config.analysis_window_size)
     else:
         akscosts = latest_akscosts
 
@@ -315,7 +358,7 @@ def load_blobstorage_dataframe(config):
     del akscosts
 
     # and filter costs to only the MRGs we want to consider
-    costs = costs[costs["ResourceGroup"].str.lower().isin(target_mrgs)]
+    costs = costs[costs["ResourceGroup"].str.lower().isin(config.target_mrgs)]
 
 
     print("********** Costs loaded to data frame: " + str(len(costs.index)) + " rows. **********")
@@ -345,7 +388,7 @@ def load_blobstorage_dataframe(config):
     all_workspace_ids = pd.concat([storage["workspace_id"], costs["workspace_id"]]).unique()
 
     print("Retrieving workspace names ...")
-    workspaces = list_workspaces()
+    workspaces = list_workspaces(azure_token, config)
 
     workspace_names = {}
     for wsid in all_workspace_ids:
@@ -359,19 +402,17 @@ def load_blobstorage_dataframe(config):
 
     costs["workspace_name"] = costs.apply(lambda x: workspace_names.get(x["workspace_id"], None), axis=1)
 
-
     print("********** Annotated data frames with workspace names. **********")
 
     # storage: calculate a value that is the workspace name if available and otherwise the container_name.
-    def first_non_empty(col1, col2):
-        if col1 is None:
-            return col2
-        else:
-            return col1
-
-
     storage["workspace_or_container"] = storage.apply(lambda x: first_non_empty(x["workspace_name"], x["container_name"]), axis=1)
 
     print("********** Calculated grouping key for storage. **********")
 
-    return storage
+    # costs: calculate a value that is the workspace name if available and otherwise the meter category.
+
+    costs["workspace_or_category"] = costs.apply(lambda x: first_non_empty(x["workspace_name"], x["MeterCategory"] + " (shared)"), axis=1)
+
+    print("********** Calculated grouping key for costs. **********")
+
+    return storage, costs
