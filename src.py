@@ -1,31 +1,29 @@
-import subprocess
-import json
-import os
-from datetime import datetime, timedelta
 import pandas as pd
+from datetime import datetime, timedelta
+from collections import namedtuple
 
 
-def az_storage_blob_list(
-    prefix, 
-    cost_management_key, 
-    cost_management_storage_container, 
-    cost_management_storage_account
-):    
-    script_path = f"{os.path.dirname(__file__)}/az-storage-blob-list.sh"
-    return run_bash_get_json([
-        script_path,
-        prefix,
-        cost_management_key, 
-        cost_management_storage_container, 
-        cost_management_storage_account])
-
-
-def run_bash_get_json(args):
-    try:
-        process = subprocess.run(args, capture_output=True, text=True, check=True)
-    except subprocess.CalledProcessError as e:
-        raise Exception(f"Bash script execution failed: {args[0]}. Error code: {e.returncode}")
-    return json.loads(process.stdout)
+Config = namedtuple('Config', [
+    'wsm_url',
+    'rawls_url',
+    'current_workspace_id',
+    'subscription_id',
+    'storage_account',
+    'target_mrgs',
+    'container_name',
+    'container_id',
+    'blob_inventory_name',
+    'blob_inventory_prefix',
+    'cost_management_storage_account',
+    'cost_management_storage_container',
+    'cost_management_directory',
+    'aks_management_storage_account',
+    'aks_management_storage_container',
+    'aks_management_directory',
+    'local_costs_url',
+    'local_aks_costs_url',
+    'analysis_window_size',
+])
 
 
 def from_last_month(last_modified_datetime, now=None):
@@ -59,3 +57,4 @@ def filtered_export_df_rolling_window(latest_cost_df, previous_cost_df, latest_c
     last_modified = latest_cost_export['properties']['lastModified']
     rolling_window_delta = pd.to_datetime(last_modified).to_datetime64() - pd.Timedelta(days=window_size)
     return cost_df[cost_df['UsageDateTime'] >= rolling_window_delta]
+
