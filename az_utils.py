@@ -5,7 +5,7 @@ import requests
 from uuid import UUID
 from collections import namedtuple
 import pandas as pd
-
+import humanize
 
 
 from .src import Config, latest_export_from_last_month, format_previous_export_filename, filtered_export_df_rolling_window
