@@ -51,6 +51,11 @@ def latest_export_from_last_month(export_list):
         return sorted_export_list[0]
 
 
+def format_previous_export_filename(cost_export, template):
+    export_datetime = datetime.fromisoformat(cost_export['properties']['lastModified'])
+    return template.format(f"{export_datetime.year}_{export_datetime.month}_{export_datetime.day}")
+
+
 def filtered_export_df_rolling_window(latest_cost_df, previous_cost_df, latest_cost_export, window_size=30):
     cost_df = pd.concat([latest_cost_df, previous_cost_df])
     cost_df['UsageDateTime'] = pd.to_datetime(cost_df['UsageDateTime'])

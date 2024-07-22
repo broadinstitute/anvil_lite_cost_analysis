@@ -1,7 +1,8 @@
 import subprocess
 import json
 import os
-
+import requests
+from .src import Config, latest_export_from_last_month, format_previous_export_filename
 
 def az_storage_blob_list(
     prefix, 
@@ -52,7 +53,7 @@ def get_sas_token(azure_token, config: Config):
     return json.loads(response.text)["token"]
 
 
-def copy_to_workspace_storage(sourcefile, destinationfile, sas_token):
+def copy_to_workspace_storage(sourcefile, destinationfile, sas_token, config: Config):
     # generate a sas token for the custom storage container
     end = run_process(['date', '-u', '-d', "30 minutes", '+%Y-%m-%dT%H:%MZ'])
     source_uri_raw = run_process(
@@ -81,3 +82,47 @@ def copy_to_workspace_storage(sourcefile, destinationfile, sas_token):
         '''.split()
     )
     return json.loads(output)
+
+
+def copy_exports_to_workspace(azure_token, cost_management_key, config: Config):
+    # Find the most recent cost export from the custom storage container.
+    sorted_cost_exports = az_storage_blob_list(
+        config.cost_management_directory, 
+        cost_management_key,
+        config.cost_management_storage_container, 
+        config.cost_management_storage_account)
+    latest_cost_export = sorted_cost_exports[0]
+    previous_cost_export = latest_export_from_last_month(sorted_cost_exports)
+
+
+    # Find the most recent AKS cost export, using the same technique
+    sorted_aks_cost_exports = az_storage_blob_list(
+        config.aks_management_directory,
+        cost_management_key, 
+        config.cost_management_storage_container, 
+        config.cost_management_storage_account)
+    latest_aks_cost_export = sorted_aks_cost_exports[0]
+    previous_aks_cost_export = alca.latest_export_from_last_month(sorted_aks_cost_exports)
+
+
+    sas_token = get_sas_token(azure_token, config)
+
+    copy_to_workspace_storage(
+        latest_cost_export["name"], config.local_costs_url, sas_token, config)
+
+    copy_to_workspace_storage(
+        latest_aks_cost_export["name"], config.local_aks_costs_url, sas_token, config)
+
+    local_previous_costs_url = format_previous_export_filename(
+        previous_cost_export, "costexport/{}.csv")
+
+    local_previous_aks_costs_url = format_previous_export_filename(
+        previous_aks_cost_export, "costexport/{}-aks.csv")
+
+    copy_to_workspace_storage(
+        previous_cost_export["name"], local_previous_costs_url, sas_token, config)
+
+    copy_to_workspace_storage(
+        previous_aks_cost_export["name"], local_previous_aks_costs_url, sas_token, config)
+
+
