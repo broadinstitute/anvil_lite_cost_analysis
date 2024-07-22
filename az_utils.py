@@ -415,4 +415,13 @@ def build_analysis_dataframes(exports, azure_token, sas_token, config):
 
     print("********** Calculated grouping key for costs. **********")
 
-    return storage, costs
+    # storage: group by workspace_or_container, sum the Content-Length
+    storage_grouped = storage.groupby("workspace_or_container")["Content-Length"].sum().to_frame().sort_values(by="Content-Length", ascending=False).reset_index()
+
+    # convert bytes to megabytes for plotting, below
+    storage_grouped["MB"] = storage_grouped["Content-Length"]/(1024*1024)
+
+    # convert bytes to a human-readable string
+    storage_grouped["Total Size"] = storage_grouped["Content-Length"].map(humanize.naturalsize)
+
+    return storage_grouped, costs
