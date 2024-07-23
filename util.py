@@ -39,6 +39,15 @@ Exports = namedtuple('Exports', [
 ])
 
 
+AnalysisData = namedtuple('AnalysisData', [
+    'storage_grouped',
+    'costs',
+    'costs_grouped',
+    'costs_workspace_grouped',
+    'costs_shared_grouped'
+])
+
+
 def from_last_month(last_modified_datetime, now=None):
     if not now:
         now = datetime.now()

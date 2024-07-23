@@ -223,5 +223,11 @@ def build_analysis_dataframes(exports: Exports, azure_token, sas_token, config: 
     costs_shared_grouped = costs.groupby("MeterCategory")[config.cost_column_name].sum().to_frame().sort_values(by=config.cost_column_name, ascending=False).reset_index()
     costs_shared_grouped["Total Cost"] = costs_shared_grouped[config.cost_column_name].map("${:,.2f}".format)
 
-    return storage_grouped, costs_grouped, costs_workspace_grouped, costs_shared_grouped
+    return AnalysisData(
+        storage_grouped, 
+        costs,
+        costs_grouped, 
+        costs_workspace_grouped, 
+        costs_shared_grouped
+    )
 
