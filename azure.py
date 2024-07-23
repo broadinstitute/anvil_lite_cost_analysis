@@ -2,7 +2,7 @@ import subprocess
 import json
 import os
 
-from util import *
+from .util import *
 
 
 def run_process(command_list):
