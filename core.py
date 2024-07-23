@@ -212,5 +212,19 @@ def build_analysis_dataframes(exports, azure_token, sas_token, config):
     # convert bytes to a human-readable string
     storage_grouped["Total Size"] = storage_grouped["Content-Length"].map(humanize.naturalsize)
 
-    return storage_grouped, costs
+    # costs: group by workspace_or_category, sum the costs
+
+    cost_column_name = "PreTaxCost"
+
+
+    costs_grouped = costs.groupby("workspace_or_category")[cost_column_name].sum().to_frame().sort_values(by=cost_column_name, ascending=False).reset_index()
+    costs_grouped["Total Cost"] = costs_grouped[cost_column_name].map("${:,.2f}".format)
+
+    costs_workspace_grouped = costs.groupby("workspace_name")[cost_column_name].sum().to_frame().sort_values(by=cost_column_name, ascending=False).reset_index()
+    costs_workspace_grouped["Total Cost"] = costs_workspace_grouped[cost_column_name].map("${:,.2f}".format)
+
+    costs_shared_grouped = costs.groupby("MeterCategory")[cost_column_name].sum().to_frame().sort_values(by=cost_column_name, ascending=False).reset_index()
+    costs_shared_grouped["Total Cost"] = costs_shared_grouped[cost_column_name].map("${:,.2f}".format)
+
+    return storage_grouped, costs_grouped, costs_workspace_grouped, costs_shared_grouped
 
