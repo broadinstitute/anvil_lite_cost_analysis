@@ -1,105 +1,13 @@
-import subprocess
-import json
-import os
-import requests
-from uuid import UUID
-from collections import namedtuple
 import pandas as pd
 import humanize
+import json
+import requests
+
+from .util import *
+from .azure import *
 
 
-from .src import Config, latest_export_from_last_month, format_previous_export_filename, filtered_export_df_rolling_window
-
-
-Exports = namedtuple('Exports', [
-    'latest_cost_export',
-    'previous_cost_export',
-    'latest_aks_cost_export',
-    'previous_aks_cost_export'
-])
-
-
-def az_storage_blob_list(
-    prefix, 
-    cost_management_key, 
-    cost_management_storage_container, 
-    cost_management_storage_account
-):    
-    script_path = f"{os.path.dirname(__file__)}/az-storage-blob-list.sh"
-    process = subprocess.run([
-        script_path,
-        prefix,
-        cost_management_key, 
-        cost_management_storage_container, 
-        cost_management_storage_account],
-        capture_output=True, text=True, check=True)
-
-    return json.loads(process.stdout)
-
-
-def run_process(command_list):
-    process = subprocess.run(
-        command_list,
-        capture_output=True, text=True, check=True
-    )
-    return process.stdout
-
-
-def get_azure_token():
-    run_process('az login --identity --allow-no-subscriptions'.split())
-    access_token_response = run_process('az account get-access-token'.split())
-    azure_token = json.loads(access_token_response)['accessToken']
-    return azure_token
-
-
-def get_sas_token(azure_token, config: Config):
-    sas_token_url = config.wsm_url + "/api/workspaces/v1/" \
-        + config.current_workspace_id + "/resources/controlled/azure/storageContainer/" \
-        + config.container_id + "/getSasToken?sasExpirationDuration=28800"
-
-    headers = {"Authorization": "Bearer " + azure_token, "accept": "application/json"}
-    response = requests.post(sas_token_url, headers=headers)
-    status_code = response.status_code
-    
-    if status_code != 200:
-        print(response.text)
-        raise Exception("Failed to retrieve SAS token")
-    
-    return json.loads(response.text)["token"]
-
-
-def copy_to_workspace_storage(sourcefile, destinationfile, sas_token, cost_management_key, config: Config):
-    # generate a sas token for the custom storage container
-    end = run_process(['date', '-u', '-d', "30 minutes", '+%Y-%m-%dT%H:%MZ'])
-    source_uri_raw = run_process(
-        f'''
-        az storage blob generate-sas
-            -c {config.cost_management_storage_container}
-            -n {sourcefile}
-            --account-name {config.cost_management_storage_account}
-            --account-key "{cost_management_key}"
-            --permissions r
-            --expiry {end.rstrip()}
-            --full-uri
-        '''.split()
-    )
-    source_uri = source_uri_raw.rstrip('\n').strip('"')
-    
-    output = run_process(
-        f'''
-        az storage blob copy start
-            --requires-sync true
-            --source-uri {source_uri}
-            --destination-blob {destinationfile}
-            --destination-container {config.container_name}
-            --account-name {config.storage_account}
-            --sas-token {sas_token}
-        '''.split()
-    )
-    return json.loads(output)
-
-
-def get_exports(cost_management_key, config):
+def get_exports(cost_management_key, config: Config):
     # Find the most recent cost export from the custom storage container.
     sorted_cost_exports = az_storage_blob_list(
         config.cost_management_directory, 
@@ -151,128 +59,8 @@ def copy_exports_to_workspace(exports: Exports, sas_token, cost_management_key, 
     return [latest_cost_export_responses, previous_cost_export_responses]
 
 
-def get_latest_blobmanifest(sas_token, config):
-    # Find the most recent blob inventory files.
-    # Blob inventory output is spread across multiple files. We need to jump through some hoops to find them.
-    # Any given inventory report will have a checksum, a manifest, and some number of CSV files.
-
-    # Find the most recent manifest by listing all files, filtering to those whose name ends in "manifest.json",
-    # sorting by most-recent, and taking the single most recent manifest.
-
-    raw_output = run_process(
-        f'''
-        az storage blob list
-        -c {config.container_name}
-        --prefix {config.blob_inventory_prefix}
-        --account-name {config.storage_account}
-        --sas-token {sas_token}
-        '''.split()
-    )
-    parsed_output = json.loads(raw_output)
-    manifest_output = [
-        entry 
-        for entry in parsed_output 
-        if entry['name'].endswith('manifest.json')
-    ]
-    sorted_manifest_output = sorted(
-        manifest_output,
-        key = lambda m: m['properties']['lastModified'],
-        reverse = True
-    )
-    return sorted_manifest_output[0]['name']
-
-
-def get_sas_enabled_url(blob_name, azure_token, config):
-    sas_token_url = config.wsm_url + "/api/workspaces/v1/" + config.current_workspace_id + \
-        "/resources/controlled/azure/storageContainer/" + config.container_id + \
-    "/getSasToken?sasExpirationDuration=28800&sasBlobName=" + blob_name
-
-    headers = {"Authorization": "Bearer " + azure_token, "accept": "application/json"}
-    response = requests.post(sas_token_url, headers=headers)
-    status_code = response.status_code
-    
-    if status_code != 200:
-        print(response.text)
-        raise Exception("Failed to retrieve SAS token")
-    
-    return json.loads(response.text)["url"]
-
-
-# Load storage into a data frame
-def load_export_to_dataframe(sasurl):
-    return pd.read_csv(sasurl.replace(" ", "%20"), low_memory=False)
-
-
-# extract the workspace id from the container name, where possible
-def extract_workspace_id(container_name):
-    # TODO: if desired, handle VM-attached storage containers here; they start with "ls-saturn-"
-    if container_name.startswith("sc-"):
-        try:
-            return UUID(container_name[-36:])
-        except ValueError:
-            return None
-    return None
-
-# extract a workspace id from tags, where available
-def extract_workspace_tag(tags):
-    if tags and isinstance(tags, str):
-        try:
-            # tagobj = json.loads("{" + tags + "}")
-            tagobj = json.loads(tags)
-            if "workspaceId" in tagobj.keys():
-                return tagobj["workspaceId"]
-        except Exception as e:
-            print("Error parsing tags as json: " + str(tags) + " " + repr(e))
-    return None
-
-# Look up the names for each workspace.
-# 
-# Getting the workspace name assumes that the person executing this script has PROJECT_OWNER permissions on
-# the billing project, or otherwise can read the workspace. Else, Rawls will return an error when asking for the name.
-# 
-# def get_workspace_name(workspace_id, azure_token, config):
-#     ws_url = config.rawls_url + "/api/workspaces/id/" + config.workspace_id + "?fields=workspace.namespace,workspace.name"
-
-#     headers = {"Authorization": "Bearer " + azure_token, "accept": "application/json"}
-#     response = requests.get(ws_url, headers=headers)
-#     status_code = response.status_code
-    
-#     if status_code != 200:
-#         print(response.text)
-#         return "id: " + config.workspace_id
-    
-#     ws = json.loads(response.text)
-#     return ws["workspace"]["name"]
-
-
-def list_workspaces(azure_token, config):
-    ws_url = config.rawls_url + "/api/workspaces?fields=workspace.name,workspace.workspaceId"
-
-    headers = {"Authorization": "Bearer " + azure_token, "accept": "application/json"}
-    response = requests.get(ws_url, headers=headers)
-    status_code = response.status_code
-    
-    if status_code != 200:
-        print(response.text)
-        return "id: " + config.workspace_id
-    
-    wslist = json.loads(response.text)
-    
-    workspaces = {}
-    for ws in wslist:
-        workspaces[ws["workspace"]["workspaceId"]] = ws["workspace"]["name"]
-
-    return workspaces
-
-def first_non_empty(col1, col2):
-    if col1 is None:
-        return col2
-    else:
-        return col1
-
 def build_analysis_dataframes(exports, azure_token, sas_token, config):
     blobmanifest = get_latest_blobmanifest(sas_token, config)
-
     print("********** found blob inventory manifest file: " + blobmanifest + " **********")
 
     # Get a SAS-token-enabled URL to the manifest file
@@ -425,3 +213,4 @@ def build_analysis_dataframes(exports, azure_token, sas_token, config):
     storage_grouped["Total Size"] = storage_grouped["Content-Length"].map(humanize.naturalsize)
 
     return storage_grouped, costs
+
