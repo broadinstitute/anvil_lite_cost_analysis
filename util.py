@@ -131,7 +131,7 @@ def list_workspaces(azure_token, config):
     return workspaces
 
 
-def request_sas(azure_token, config: Config):
+def get_sas_token(azure_token, config: Config):
     sas_token_url = config.wsm_url + "/api/workspaces/v1/" \
         + config.current_workspace_id + "/resources/controlled/azure/storageContainer/" \
         + config.container_id + "/getSasToken?sasExpirationDuration=28800"
@@ -144,15 +144,21 @@ def request_sas(azure_token, config: Config):
         print(response.text)
         raise Exception("Failed to retrieve SAS token")
     
-    return json.loads(response.text)
+    return json.loads(response.text)['token']
 
 
-def get_sas_token(azure_token, config: Config):
-    response = request_sas(azure_token, config)
-    return response['token']
+def get_sas_enabled_url(blob_name, azure_token, config: Config):
+    sas_token_url = config.wsm_url + "/api/workspaces/v1/" + config.current_workspace_id + \
+        "/resources/controlled/azure/storageContainer/" + config.container_id + \
+    "/getSasToken?sasExpirationDuration=28800&sasBlobName=" + blob_name
 
-
-def get_sas_enabled_url(blob_name, azure_token, config):
-    response = request_sas(azure_token, config)
-    return response['url']
+    headers = {"Authorization": "Bearer " + azure_token, "accept": "application/json"}
+    response = requests.post(sas_token_url, headers=headers)
+    status_code = response.status_code
+    
+    if status_code != 200:
+        print(response.text)
+        raise Exception("Failed to retrieve SAS token")
+    
+    return json.loads(response.text)["url"]
 
