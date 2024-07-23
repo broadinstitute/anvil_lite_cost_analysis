@@ -27,6 +27,7 @@ Config = namedtuple('Config', [
     'local_costs_url',
     'local_aks_costs_url',
     'analysis_window_size',
+    'cost_column_name'
 ])
 
 

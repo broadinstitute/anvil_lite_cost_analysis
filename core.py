@@ -59,7 +59,7 @@ def copy_exports_to_workspace(exports: Exports, sas_token, cost_management_key, 
     return [latest_cost_export_responses, previous_cost_export_responses]
 
 
-def build_analysis_dataframes(exports, azure_token, sas_token, config):
+def build_analysis_dataframes(exports: Exports, azure_token, sas_token, config: Config):
     blobmanifest = get_latest_blobmanifest(sas_token, config)
     print("********** found blob inventory manifest file: " + blobmanifest + " **********")
 
@@ -214,17 +214,14 @@ def build_analysis_dataframes(exports, azure_token, sas_token, config):
 
     # costs: group by workspace_or_category, sum the costs
 
-    cost_column_name = "PreTaxCost"
+    costs_grouped = costs.groupby("workspace_or_category")[config.cost_column_name].sum().to_frame().sort_values(by=config.cost_column_name, ascending=False).reset_index()
+    costs_grouped["Total Cost"] = costs_grouped[config.cost_column_name].map("${:,.2f}".format)
 
+    costs_workspace_grouped = costs.groupby("workspace_name")[config.cost_column_name].sum().to_frame().sort_values(by=config.cost_column_name, ascending=False).reset_index()
+    costs_workspace_grouped["Total Cost"] = costs_workspace_grouped[config.cost_column_name].map("${:,.2f}".format)
 
-    costs_grouped = costs.groupby("workspace_or_category")[cost_column_name].sum().to_frame().sort_values(by=cost_column_name, ascending=False).reset_index()
-    costs_grouped["Total Cost"] = costs_grouped[cost_column_name].map("${:,.2f}".format)
-
-    costs_workspace_grouped = costs.groupby("workspace_name")[cost_column_name].sum().to_frame().sort_values(by=cost_column_name, ascending=False).reset_index()
-    costs_workspace_grouped["Total Cost"] = costs_workspace_grouped[cost_column_name].map("${:,.2f}".format)
-
-    costs_shared_grouped = costs.groupby("MeterCategory")[cost_column_name].sum().to_frame().sort_values(by=cost_column_name, ascending=False).reset_index()
-    costs_shared_grouped["Total Cost"] = costs_shared_grouped[cost_column_name].map("${:,.2f}".format)
+    costs_shared_grouped = costs.groupby("MeterCategory")[config.cost_column_name].sum().to_frame().sort_values(by=config.cost_column_name, ascending=False).reset_index()
+    costs_shared_grouped["Total Cost"] = costs_shared_grouped[config.cost_column_name].map("${:,.2f}".format)
 
     return storage_grouped, costs_grouped, costs_workspace_grouped, costs_shared_grouped
 
