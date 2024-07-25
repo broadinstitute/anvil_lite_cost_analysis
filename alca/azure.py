@@ -18,18 +18,22 @@ def az_storage_blob_list(
     cost_management_key, 
     cost_management_storage_container, 
     cost_management_storage_account
-):    
-    script_path = f"{os.path.dirname(__file__)}/az-storage-blob-list.sh"
-    process = subprocess.run([
-        script_path,
-        prefix,
-        cost_management_key, 
-        cost_management_storage_container, 
-        cost_management_storage_account],
-        capture_output=True, text=True, check=True)
-
-    return json.loads(process.stdout)
-
+):  
+    process_output = run_process(
+        f'''
+        az storage blob list
+            -c {cost_management_storage_container}
+            --prefix {prefix}
+            --account-name {cost_management_storage_account}
+            --account-key {cost_management_key}
+        '''.split()
+    )
+    parsed_output = json.loads(process_output)
+    return sorted(
+        parsed_output, 
+        key=lambda e: e['properties']['lastModified'],
+        reverse=True
+    )
 
 def get_azure_token():
     run_process('az login --identity --allow-no-subscriptions'.split())
@@ -38,7 +42,13 @@ def get_azure_token():
     return azure_token
 
 
-def copy_to_workspace_storage(sourcefile, destinationfile, sas_token, cost_management_key, config: Config):
+def copy_to_workspace_storage(
+    sourcefile, 
+    destinationfile, 
+    sas_token, 
+    cost_management_key, 
+    config: Config
+):
     # generate a sas token for the custom storage container
     end = run_process(['date', '-u', '-d', "30 minutes", '+%Y-%m-%dT%H:%MZ'])
     source_uri_raw = run_process(
@@ -69,7 +79,7 @@ def copy_to_workspace_storage(sourcefile, destinationfile, sas_token, cost_manag
     return json.loads(output)
 
 
-def get_latest_blobmanifest(sas_token, config):
+def get_latest_blobmanifest(sas_token, config: Config):
     # Find the most recent blob inventory files.
     # Blob inventory output is spread across multiple files. We need to jump through some hoops to find them.
     # Any given inventory report will have a checksum, a manifest, and some number of CSV files.
