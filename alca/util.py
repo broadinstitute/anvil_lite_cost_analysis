@@ -16,7 +16,6 @@ Config = namedtuple('Config', [
     'target_mrgs',
     'container_name',
     'container_id',
-    'blob_inventory_name',
     'blob_inventory_prefix',
     'cost_management_storage_account',
     'cost_management_storage_container',

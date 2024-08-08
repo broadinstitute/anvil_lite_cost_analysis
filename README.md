@@ -24,3 +24,12 @@ There should be one or more cells near the top of the notebook that:
 
 from anvil_lite_cost_analysis import alca
 ```
+
+If you are updating this repo and want to use your branch from within a Jupyter Notebook, you'll need to checkout your branch from a terminal in Jupyter:
+1. File -> New Launcher
+2. Select Terminal
+3. In the terminal:
+ ```
+ cd anvil_lite_cost_analysis
+ git checkout <your-branch>
+ ```

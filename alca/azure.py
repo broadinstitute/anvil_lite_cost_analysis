@@ -107,4 +107,4 @@ def get_latest_blobmanifest(sas_token, config: Config):
         key = lambda m: m['properties']['lastModified'],
         reverse = True
     )
-    return sorted_manifest_output[0]['name']
+    return sorted_manifest_output[0]['name'] if sorted_manifest_output else None
